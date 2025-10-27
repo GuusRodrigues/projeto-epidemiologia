@@ -59,7 +59,7 @@ python src/ml_pipeline.py
 
 # Executar dashboard
 python src/dashboard.py
-Acesse localmente: http://localhost:8050
+Acesse localmente: http://localhost:8080
 
 ---
 
