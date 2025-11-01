@@ -129,18 +129,24 @@ app.layout = html.Div([
         dcc.Tab(label="Visão Geral (Resumo)", children=[
             html.Div([
                 html.H3("Resumo rápido"),
-                html.P("Mapa interativo com intensidade de casos (último mês disponível) e indicadores principais."),
+                html.P("Mapa interativo com intensidade de casos e ranking dos estados com mais registros."),
                 html.Div([
                     html.Div([
-                        html.H4("Legenda"),
-                        html.P("Cores mais fortes indicam maior número de casos. Use o filtro de ano abaixo para escolher o período.")
-                    ], style={'width':'300px','padding':'10px','border':'1px solid #eee','borderRadius':'6px','background':'#fff'}),
+                        html.Label("Escolha o ano:"),
+                        dcc.Dropdown(
+                            id='vg-ano',
+                            options=[{'label':str(a),'value':a} for a in sorted(df['ano'].unique())] if df is not None else [],
+                            value=df['ano'].max() if df is not None else None,
+                            style={'width':'200px'}
+                        ),
+                        dcc.Graph(id='vg-mapa')
+                    ], style={'flex':'1','padding':'10px'}),
 
                     html.Div([
-                        html.Label("Escolha o ano:"),
-                        dcc.Dropdown(id='vg-ano', options=[{'label':str(a),'value':a} for a in sorted(df['ano'].unique())] if df is not None else [], value=df['ano'].max() if df is not None else None, style={'width':'200px'}),
-                        dcc.Graph(id='vg-mapa')
-                    ], style={'flex':'1','paddingLeft':'20px'})
+                        html.H4("Ranking por Estado"),
+                        html.P("Os 10 estados com mais casos no ano selecionado:"),
+                        dcc.Graph(id='vg-ranking')
+                    ], style={'width':'400px','padding':'10px','border':'1px solid #eee','borderRadius':'6px','background':'#fff'})
                 ], style={'display':'flex','gap':'20px'})
             ], style={'padding':'20px'})
         ]),
@@ -188,23 +194,20 @@ app.layout = html.Div([
                 html.H3("Como usar este painel (guia rápido)"),
                 html.Ul([
                     html.Li("Visão Geral: ver rapidamente quais estados têm maior intensidade e se houve aumento no último mês."),
-                    html.Li("Previsão: ao selecionar um estado, observe o próximo mês previsto e compare com o histórico. Use isso para priorizar testes, vigilância e estoque de insumos."),
-                    html.Li("Clusters: estados do mesmo grupo tendem a evoluir de forma parecida — é útil para compartilhar estratégias de resposta."),
+                    html.Li("Previsão: ao selecionar um estado, observe o próximo mês previsto e compare com o histórico."),
+                    html.Li("Clusters: estados do mesmo grupo tendem a evoluir de forma parecida — útil para ações regionais conjuntas."),
                 ]),
-                html.H4("Interpretação das métricas (em linguagem simples)"),
-                html.P("MAE (Erro médio absoluto): em média, quanto o modelo erra na contagem de casos. Ex.: MAE = 14 significa que, em média, a previsão difere 14 casos."),
-                html.P("R²: quanto da variação dos casos o modelo consegue explicar. Valores maiores (próximos a 1) indicam melhor ajuste."),
-                html.H4("Limitações importantes"),
+                html.H4("Interpretação das métricas"),
+                html.P("MAE: erro médio absoluto entre casos reais e previstos."),
+                html.P("R²: proporção da variação dos casos explicada pelo modelo."),
+                html.H4("Limitações"),
                 html.Ul([
-                    html.Li("Os modelos dependem da qualidade e da cobertura dos dados. Subnotificações impactam previsões."),
-                    html.Li("As previsões são indicativas — devem ser consideradas junto com dados locais e conhecimento clínico."),
-                    html.Li("Recomendamos combinar com outras fontes (clima, mobilidade) para decisões operacionais mais robustas.")
+                    html.Li("Os modelos dependem da qualidade dos dados."),
+                    html.Li("As previsões são indicativas — devem ser validadas com informações locais.")
                 ])
             ], style={'padding':'20px','lineHeight':'1.6'})
         ])
     ]),
-
-    # compartilhamento / downloads
     dcc.Download(id="download-csv")
 ], style={'fontFamily':'Arial, sans-serif','maxWidth':'1100px','margin':'0 auto'})
 
@@ -223,20 +226,38 @@ def build_kpis(_):
         html.Div([html.H5("Estado com mais casos (hist.)"), html.H2(f"{maior_estado}")], style={'padding':'10px','border':'1px solid #eee','borderRadius':'6px','width':'260px','background':'#fff'})
     ]
 
-# Visão Geral - mapa
-@app.callback(Output('vg-mapa','figure'), Input('vg-ano','value'))
+# Visão Geral - mapa e ranking
+@app.callback(
+    Output('vg-mapa','figure'),
+    Output('vg-ranking','figure'),
+    Input('vg-ano','value')
+)
 def update_vg_map(ano):
     if df is None or ano is None:
-        return go.Figure()
+        return go.Figure(), go.Figure()
     df_map = df[df['ano']==ano].groupby('sg_uf_not', as_index=False)['casos'].sum()
-    fig = px.choropleth(df_map,
-                        geojson="https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/brazil-states.geojson",
-                        locations='sg_uf_not', featureidkey='properties.sigla',
-                        color='casos', title=f'Casos agregados por estado - {ano}')
-    fig.update_geos(fitbounds="locations", visible=False)
-    return fig
+    fig_map = px.choropleth(
+        df_map,
+        geojson="https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/brazil-states.geojson",
+        locations='sg_uf_not', featureidkey='properties.sigla',
+        color='casos', title=f'Casos agregados por estado - {ano}'
+    )
+    fig_map.update_geos(fitbounds="locations", visible=False)
 
-# Previsão - gráfico e texto interpretativo
+    # Ranking top 10 estados
+    df_rank = df_map.sort_values('casos', ascending=False).head(10)
+    fig_rank = px.bar(
+        df_rank,
+        x='casos', y='sg_uf_not',
+        orientation='h',
+        title='Top 10 Estados com Mais Casos',
+        text='casos'
+    )
+    fig_rank.update_traces(textposition='outside')
+    fig_rank.update_layout(yaxis={'categoryorder':'total ascending'}, height=500)
+    return fig_map, fig_rank
+
+# Previsão
 @app.callback(Output('sup-graph','figure'), Output('sup-texto','children'),
               Input('sup-estado','value'), Input('sup-meses','value'))
 def sup_predict(estado, meses):
@@ -252,14 +273,13 @@ def sup_predict(estado, meses):
     df_prev['tipo'] = 'Previsto'
     df_plot = pd.concat([df_hist_local, df_prev[['ano_mes','casos','tipo']]], ignore_index=True).sort_values('ano_mes')
     fig = px.line(df_plot, x='ano_mes', y='casos', color='tipo', markers=True, title=f"Histórico e previsão - {estado}")
-    # Texto interpretativo simples
     ultimo_obs = int(df_hist_local['casos'].iloc[-1])
     proximo_pred = int(df_prev['casos'].iloc[0])
     pct = ((proximo_pred-ultimo_obs)/ultimo_obs*100) if ultimo_obs>0 else np.nan
-    texto = f"Último mês observado: {ultimo_obs} casos. Próximo mês previsto: {proximo_pred} casos ({pct:.1f}% vs último mês). Use como orientação para priorização."
+    texto = f"Último mês observado: {ultimo_obs} casos. Próximo mês previsto: {proximo_pred} casos ({pct:.1f}% vs último mês)."
     return fig, texto
 
-# Clustering - scatter PCA + tabela
+# Clustering
 @app.callback(Output('clus-scatter','figure'), Output('clus-table','figure'), Input('clus-k','value'))
 def clus_update(k):
     if df is None:
@@ -279,13 +299,12 @@ def clus_update(k):
     df_plot['cluster'] = df_feats['cluster'].astype(str)
     df_plot['estado'] = df_feats['sg_uf_not']
     fig_scatter = px.scatter(df_plot, x='pca1', y='pca2', color='cluster', hover_data=['estado'], title=f'Grupos de estados (k={k})')
-    # tabela simples
     df_tab = df_feats.sort_values('cluster')
     table = go.Figure(data=[go.Table(header=dict(values=list(df_tab.columns)),
                                      cells=dict(values=[df_tab[c] for c in df_tab.columns]))])
     return fig_scatter, table
 
-# Downloads (previsões e clusters)
+# Downloads
 @app.callback(Output("download-csv","data"),
               Input("btn-download-pre","n_clicks"),
               Input("btn-download-clusters","n_clicks"),
